@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Trading Journal Pro</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #0f172a;
+    color: white;
+}
+
+header {
+    text-align: center;
+    padding: 12px;
+    background: #111827;
+    font-weight: bold;
+}
+
+.tabs {
+    display: flex;
+    gap: 6px;
+    padding: 10px;
+    background: #1e293b;
+}
+
+.tabs button {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: #334155;
+    color: white;
+}
+
+.tabs button.active {
+    background: #22c55e;
+}
+
+.container {
+    max-width: 520px;
+    margin: auto;
+    padding: 15px;
+}
+
+label {
+    display: block;
+    margin-top: 10px;
+}
+
+input, select {
+    width: 100%;
+    padding: 14px;
+    margin-top: 6px;
+    border-radius: 10px;
+    border: none;
+}
+
+button.action {
+    width: 100%;
+    padding: 14px;
+    margin-top: 12px;
+    border: none;
+    border-radius: 10px;
+    background: #22c55e;
+    color: white;
+    font-weight: bold;
+}
+
+button.secondary { background: #3b82f6; }
+button.danger { background: #ef4444; }
+
+.card {
+    background: #1e293b;
+    padding: 12px;
+    border-radius: 12px;
+    margin-top: 10px;
+}
+
+.hidden { display: none; }
+
+canvas {
+    background: white;
+    border-radius: 10px;
+    margin-top: 10px;
+}
+</style>
+</head>
+
+<body>
+
+<header>Trading Journal Pro</header>
+
+<div class="tabs">
+    <button onclick="showTab('calc', this)" class="active">Calculator</button>
+    <button onclick="showTab('journal', this)">Journal</button>
+    <button onclick="showTab('analytics', this)">Analytics</button>
+</div>
+
+<div class="container">
+
+<!-- CALCULATOR -->
+<div id="calcTab">
+
+    <label>Capital</label>
+    <input id="capital" type="number">
+
+    <label>Risk %</label>
+    <input id="riskPercent" type="number">
+
+    <label>Entry</label>
+    <input id="entry" type="number">
+
+    <label>Stop</label>
+    <input id="stop" type="number">
+
+    <label>RR</label>
+    <select id="rr">
+        <option value="2">1:2</option>
+        <option value="3">1:3</option>
+    </select>
+
+    <label>Win Rate %</label>
+    <input id="winRate" type="number">
+
+    <button class="action" onclick="calculate()">Calculate</button>
+
+    <div class="card" id="calcResults"></div>
+</div>
+
+<!-- JOURNAL -->
+<div id="journalTab" class="hidden">
+
+    <label>Asset</label>
+    <input id="jAsset">
+
+    <label>Date</label>
+    <input id="jDate" type="date">
+
+    <label>Actual Entry</label>
+    <input id="actualEntry" type="number">
+
+    <label>Actual Exit</label>
+    <input id="actualExit" type="number">
+
+    <label>Position Size</label>
+    <input id="positionSize" type="number">
+
+    <button class="action" onclick="logTrade()">Log Trade</button>
+    <button class="action secondary" onclick="clearForm()">Clear Form</button>
+
+    <div id="tradeList"></div>
+</div>
+
+<!-- ANALYTICS -->
+<div id="analyticsTab" class="hidden">
+    <div class="card" id="stats"></div>
+    <canvas id="equityChart"></canvas>
+</div>
+
+</div>
+
+<script>
+let trades = JSON.parse(localStorage.getItem("trades") || "[]");
+let chart = null;
+let editIndex = null;
+
+/* ================= TAB SWITCH ================= */
+function showTab(tab, btn) {
+    const tabs = ["calc", "journal", "analytics"];
+
+    for (let t of tabs) {
+        const el = document.getElementById(t + "Tab");
+        if (el) el.classList.add("hidden");
+    }
+
+    const active = document.getElementById(tab + "Tab");
+    if (active) active.classList.remove("hidden");
+
+    const buttons = document.querySelectorAll(".tabs button");
+    buttons.forEach(b => b.classList.remove("active"));
+
+    if (btn) btn.classList.add("active");
+}
+
+/* ================= CALCULATOR ================= */
+function calculate() {
+    const capital = Number(document.getElementById("capital").value || 0);
+    const risk = Number(document.getElementById("riskPercent").value || 0);
+    const entry = Number(document.getElementById("entry").value || 0);
+    const stop = Number(document.getElementById("stop").value || 0);
+    const rr = Number(document.getElementById("rr").value || 1);
+    const winRate = Number(document.getElementById("winRate").value || 0) / 100;
+
+    const out = document.getElementById("calcResults");
+
+    if (!capital || !risk || !entry || !stop) {
+        out.innerHTML = "Fill all fields";
+        return;
+    }
+
+    const riskAmount = capital * (risk / 100);
+    const riskPerShare = Math.abs(entry - stop);
+
+    if (!riskPerShare) {
+        out.innerHTML = "Invalid entry/stop";
+        return;
+    }
+
+    const shares = Math.floor(riskAmount / riskPerShare);
+
+    const tp = entry > stop
+        ? entry + rr * (entry - stop)
+        : entry - rr * (stop - entry);
+
+    const loss = shares * riskPerShare;
+    const profit = shares * Math.abs(tp - entry);
+    const expectancy = (winRate * profit) - ((1 - winRate) * loss);
+
+    out.innerHTML =
+        "Shares: " + shares + "<br>" +
+        "Risk: $" + loss.toFixed(2) + "<br>" +
+        "Reward: $" + profit.toFixed(2) + "<br>" +
+        "TP: " + tp.toFixed(2) + "<br>" +
+        "Expectancy: $" + expectancy.toFixed(2);
+}
+
+/* ================= LOG TRADE ================= */
+function logTrade() {
+
+    const entry = Number(document.getElementById("actualEntry").value || 0);
+    const exit = Number(document.getElementById("actualExit").value || 0);
+    const shares = Number(document.getElementById("positionSize").value || 0);
+
+    if (!entry || !exit || !shares) {
+        alert("Fill all fields");
+        return;
+    }
+
+    const pnl = (exit - entry) * shares;
+
+    const trade = {
+        asset: document.getElementById("jAsset").value || "",
+        date: document.getElementById("jDate").value || new Date().toISOString().split("T")[0],
+        entry,
+        exit,
+        shares,
+        pnl
+    };
+
+    if (editIndex !== null) {
+        trades[editIndex] = trade;
+        editIndex = null;
+    } else {
+        trades.push(trade);
+    }
+
+    localStorage.setItem("trades", JSON.stringify(trades));
+
+    render();
+    updateAnalytics();
+    clearForm();
+}
+
+/* ================= RENDER ================= */
+function render() {
+    const list = document.getElementById("tradeList");
+
+    let html = "";
+
+    for (let i = trades.length - 1; i >= 0; i--) {
+        const t = trades[i];
+
+        html += `
+        <div class="card">
+            <b>${t.asset}</b><br>
+            ${t.entry} → ${t.exit}<br>
+            Shares: ${t.shares}<br>
+            <b>P&L: $${t.pnl.toFixed(2)}</b>
+        </div>`;
+    }
+
+    list.innerHTML = html;
+}
+
+/* ================= ANALYTICS ================= */
+function updateAnalytics() {
+    const stats = document.getElementById("stats");
+
+    if (!trades.length) {
+        stats.innerHTML = "No trades yet";
+        return;
+    }
+
+    let total = 0;
+    let wins = 0;
+
+    for (let t of trades) {
+        total += t.pnl;
+        if (t.pnl > 0) wins++;
+    }
+
+    const winRate = (wins / trades.length) * 100;
+
+    stats.innerHTML =
+        "Trades: " + trades.length + "<br>" +
+        "Win Rate: " + winRate.toFixed(1) + "%<br>" +
+        "Total P&L: $" + total.toFixed(2);
+
+    renderChart();
+}
+
+/* ================= CHART ================= */
+function renderChart() {
+
+    const ctx = document.getElementById("equityChart");
+
+    let sum = 0;
+    const data = trades.map(t => {
+        sum += t.pnl;
+        return sum;
+    });
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: data.map((_, i) => i + 1),
+            datasets: [{ data }]
+        }
+    });
+}
+
+/* ================= HELPERS ================= */
+function clearForm() {
+    const ids = ["jAsset", "jDate", "actualEntry", "actualExit", "positionSize"];
+
+    for (let id of ids) {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+    }
+}
+
+/* ================= INIT ================= */
+render();
+updateAnalytics();
+</script>
+
+</body>
+</html>
