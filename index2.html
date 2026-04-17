@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Trading Journal Pro</title>
+
+<!-- PWA (iOS compatible) -->
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Trading Journal">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body { margin:0; font-family:Arial; background:#0f172a; color:white; }
+header { padding:12px; text-align:center; background:#111827; font-weight:bold; }
+
+.tabs { display:flex; gap:6px; padding:10px; background:#1e293b; }
+.tabs button {
+  flex:1; padding:12px; border:none; border-radius:8px;
+  background:#334155; color:white;
+}
+.tabs button.active { background:#22c55e; }
+
+.container { max-width:520px; margin:auto; padding:15px; }
+
+label { display:block; margin-top:10px; }
+input, select {
+  width:100%; padding:14px; border-radius:10px; border:none; margin-top:5px;
+}
+
+button.action {
+  width:100%; padding:14px; margin-top:12px;
+  border:none; border-radius:10px;
+  background:#22c55e; color:white; font-weight:bold;
+}
+
+button.secondary { background:#3b82f6; }
+button.danger { background:#ef4444; }
+
+.card {
+  background:#1e293b; padding:12px;
+  border-radius:12px; margin-top:10px;
+}
+
+.hidden { display:none; }
+
+canvas { background:white; border-radius:10px; margin-top:10px; }
+
+img { width:100%; margin-top:10px; border-radius:10px; }
+</style>
+</head>
+
+<body>
+
+<header>Trading Journal Pro</header>
+
+<div class="tabs">
+  <button onclick="showTab('calc',this)" class="active">Calculator</button>
+  <button onclick="showTab('journal',this)">Journal</button>
+  <button onclick="showTab('analytics',this)">Analytics</button>
+</div>
+
+<div class="container">
+
+<!-- CALCULATOR -->
+<div id="calcTab">
+  <label>Asset</label>
+  <input id="assetName">
+
+  <label>Capital</label>
+  <input id="capital" type="number">
+
+  <label>Risk %</label>
+  <input id="riskPercent" type="number">
+
+  <label>Entry</label>
+  <input id="entry" type="number">
+
+  <label>Stop</label>
+  <input id="stop" type="number">
+
+  <label>RR</label>
+  <select id="rr">
+    <option value="2">1:2</option>
+    <option value="3">1:3</option>
+  </select>
+
+  <label>Win Rate %</label>
+  <input id="winRate" type="number">
+
+  <button class="action" onclick="calculate()">Calculate</button>
+
+  <div class="card" id="calcResults"></div>
+</div>
+
+<!-- JOURNAL -->
+<div id="journalTab" class="hidden">
+
+  <label>Asset</label>
+  <input id="jAsset">
+
+  <label>Date</label>
+  <input id="jDate" type="date">
+
+  <label>Actual Entry</label>
+  <input id="actualEntry" type="number">
+
+  <label>Actual Exit</label>
+  <input id="actualExit" type="number">
+
+  <label>Position Size</label>
+  <input id="positionSize" type="number">
+
+  <label>Screenshot</label>
+  <input type="file" id="screenshot" accept="image/*">
+
+  <button class="action" onclick="logTrade()">Log Trade</button>
+  <button class="action secondary" onclick="exportCSV()">Export CSV</button>
+  <button class="action danger" onclick="deleteAllTrades()">Delete All Trades</button>
+  <button class="action secondary" onclick="clearForm()">Clear Form</button>
+
+  <div id="tradeList"></div>
+</div>
+
+<!-- ANALYTICS -->
+<div id="analyticsTab" class="hidden">
+  <div class="card" id="stats"></div>
+  <canvas id="equityChart"></canvas>
+</div>
+
+</div>
+
+<script>
+let trades = JSON.parse(localStorage.getItem("trades")) || [];
+let chart;
+let editIndex = null;
+
+/* Tabs */
+function showTab(tab, btn){
+  ["calc","journal","analytics"].forEach(t=>{
+    document.getElementById(t+"Tab").classList.add("hidden");
+  });
+  document.getElementById(tab+"Tab").classList.remove("hidden");
+
+  document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+/* Calculator */
+function calculate(){
+  const capital = +document.getElementById("capital").value;
+  const risk = +document.getElementById("riskPercent").value;
+  const entry = +document.getElementById("entry").value;
+  const stop = +document.getElementById("stop").value;
+  const rr = +document.getElementById("rr").value;
+  const winRate = (+document.getElementById("winRate").value||0)/100;
+
+  if(!capital||!risk||!entry||!stop){
+    calcResults.innerHTML="Fill all fields";
+    return;
+  }
+
+  const riskAmt = capital*(risk/100);
+  const rps = Math.abs(entry-stop);
+  const shares = Math.floor(riskAmt/rps);
+
+  const tp = entry>stop ? entry+rr*(entry-stop) : entry-rr*(stop-entry);
+
+  const loss = shares*rps;
+  const profit = shares*Math.abs(tp-entry);
+  const expectancy = (winRate*profit)-((1-winRate)*loss);
+
+  calcResults.innerHTML =
+    `Shares: ${shares}<br>Risk: $${loss.toFixed(2)}<br>Reward: $${profit.toFixed(2)}<br>TP: ${tp.toFixed(2)}<br>Expectancy: $${expectancy.toFixed(2)}`;
+}
+
+/* Log Trade */
+function logTrade(){
+  let shares = +positionSize.value;
+  const entry = +actualEntry.value;
+  const exit = +actualExit.value;
+
+  if(!shares||!entry||!exit){
+    alert("Missing fields");
+    return;
+  }
+
+  const pnl = (exit-entry)*shares;
+
+  const trade = {
+    asset: jAsset.value,
+    date: jDate.value || new Date().toISOString().split("T")[0],
+    actualEntry: entry,
+    actualExit: exit,
+    shares,
+    pnl
+  };
+
+  if(editIndex!==null){
+    trades[editIndex]=trade;
+    editIndex=null;
+  } else {
+    trades.push(trade);
+  }
+
+  localStorage.setItem("trades",JSON.stringify(trades));
+  render();
+  updateAnalytics();
+  clearForm();
+}
+
+/* Render */
+function render(){
+  tradeList.innerHTML = trades.slice().reverse().map((t,i)=>{
+    const idx = trades.length-1-i;
+    return `
+    <div class="card">
+      <b>${t.asset}</b> (${t.date})<br>
+      ${t.actualEntry} → ${t.actualExit}<br>
+      Size: ${t.shares}<br>
+      <b>P&L: $${t.pnl.toFixed(2)}</b><br>
+      <button class="action secondary" onclick="editTrade(${idx})">Edit</button>
+    </div>`;
+  }).join("");
+}
+
+/* Edit */
+function editTrade(i){
+  const t=trades[i];
+  editIndex=i;
+
+  jAsset.value=t.asset;
+  jDate.value=t.date;
+  actualEntry.value=t.actualEntry;
+  actualExit.value=t.actualExit;
+  positionSize.value=t.shares;
+
+  showTab("journal",document.querySelectorAll(".tabs button")[1]);
+}
+
+/* Clear form ONLY */
+function clearForm(){
+  ["jAsset","jDate","actualEntry","actualExit","positionSize"]
+  .forEach(id=>document.getElementById(id).value="");
+
+  editIndex=null;
+}
+
+/* Delete ALL trades (safe confirm) */
+function deleteAllTrades(){
+  if(!confirm("Delete ALL trades?")) return;
+  if(!confirm("This cannot be undone. Continue?")) return;
+
+  trades=[];
+  localStorage.removeItem("trades");
+  render();
+  updateAnalytics();
+}
+
+/* Analytics */
+function updateAnalytics(){
+  if(!trades.length) return;
+
+  const wins=trades.filter(t=>t.pnl>0).length;
+  const total=trades.reduce((a,b)=>a+b.pnl,0);
+  const winRate=(wins/trades.length)*100;
+
+  stats.innerHTML =
+    `Trades: ${trades.length}<br>
+     Win Rate: ${winRate.toFixed(1)}%<br>
+     Total P&L: $${total.toFixed(2)}`;
+
+  renderChart();
+}
+
+/* Chart */
+function renderChart(){
+  let sum=0;
+  const eq=trades.map(t=>sum+=t.pnl);
+
+  if(chart) chart.destroy();
+
+  chart=new Chart(equityChart,{
+    type:"line",
+    data:{
+      labels:eq.map((_,i)=>i+1),
+      datasets:[{data:eq}]
+    }
+  });
+}
+
+/* CSV */
+function exportCSV(){
+  let csv="Asset,Date,Entry,Exit,Shares,PnL\n";
+
+  trades.forEach(t=>{
+    csv+=`${t.asset},${t.date},${t.actualEntry},${t.actualExit},${t.shares},${t.pnl}\n`;
+  });
+
+  const blob=new Blob([csv]);
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="trades.csv";
+  a.click();
+}
+
+/* Init */
+render();
+updateAnalytics();
+
+/* PWA service worker */
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js");
+}
+</script>
+
+</body>
+</html>
